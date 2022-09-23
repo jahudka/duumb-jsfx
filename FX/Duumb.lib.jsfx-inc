@@ -1,0 +1,319 @@
+desc: Duumb transfer function analyser library
+version: 1.0.0
+author: jahudka
+license: MIT
+
+@init
+
+/** UTILITY **/
+
+function bin_mag_sq(buf, bin) (
+    buf[bin * 2]^2 + buf[bin * 2 + 1]^2;
+);
+
+function buffer.alloc(size) instance(idx) local(start) (
+    start = idx;
+    idx += size;
+    start;
+);
+
+
+/** Blackman-Harris window **/
+
+function blackman_harris.init(n) instance(buf, len) local(i, sum, v) (
+    buf = buffer.alloc(n);
+    len = n;
+
+    i = sum = 0; loop(n / 2 + 1,
+        v = i * $pi * 2 / n;
+        sum += (buf[i] = 0.35875 - 0.48829 * cos(v) + 0.14128 * cos(2 * v) - 0.01168 * cos(3 * v));
+        i += 1;
+    );
+
+    sum = .5 / (sum * 2 - buf[i - 1]);
+    loop(n / 2 + 1, buf[i -= 1] *= sum);
+);
+
+function blackman_harris.get(i) instance(buf, len) (
+    buf[i > len / 2 ? len - i : i];
+);
+
+
+/** Gaussian smoothing **/
+
+function smoothing.init(n) instance(map, buf, len, last) (
+    map = buffer.alloc(n / 2);
+    buf = buffer.alloc(n);
+    len = n / 2;
+    buf[0] = 1;
+    buf[1] = 1;
+    last = 1;
+);
+
+function smoothing.add(min_bin, width, sigma) instance(map, buf, len, last) local(i, sum) (
+    buf[last += 1] = width;
+    i = min_bin; loop(len - i, map[i] = last; i += 1; );
+
+    i = -floor(width / 2); sum = 0; loop(width,
+        sum += buf[last += 1] = exp(i^2 / (-2 * sigma^2)^2) / (sqrt(2 * $pi) * sigma);
+        i += 1;
+    );
+
+    i = last; loop(width, buf[i] /= sum; i -= 1; );
+);
+
+function smoothing.apply(src_buf, bin) instance(map, buf, len) local(width, i, sum) (
+    i = map[bin];
+    width = buf[i];
+    bin -= floor(width / 2);
+    i += 1;
+    sum = 0;
+    loop(width,
+        sum += bin_mag_sq(src_buf, bin) * buf[i];
+        bin += 1;
+        i += 1;
+    );
+    sum;
+);
+
+function smoothing.next(bin) instance(map, buf) (
+    bin + ceil(buf[map[bin]] / 2);
+);
+
+
+/** Per-band exponential moving average **/
+
+function integrator.init(n) instance(buf, tprev, value) (
+    buf = buffer.alloc(n);
+    tprev = 0;
+    value = 1;
+);
+
+function integrator.update() instance(tprev, value) local(tnow) (
+    tnow = time_precise();
+    value = tprev > 0 ? 1 - exp(-5 * 1000.0 * (tnow - tprev) / 5000.0) : 1;
+    tprev = tnow;
+);
+
+function integrator.apply(bin, v) instance(buf, value) (
+    buf[bin] += value * (v - buf[bin]);
+);
+
+
+/** RMS calculator **/
+function rms.init(n) instance(spl_buf, ref_buf, spl_hist, ref_hist, size, buf_pos, hist_pos) (
+    spl_buf = buffer.alloc(n);
+    ref_buf = buffer.alloc(n);
+    spl_hist = buffer.alloc(n);
+    ref_hist = buffer.alloc(n);
+    size = n;
+    buf_pos = hist_pos = 0;
+);
+
+function rms.push(spl, ref) instance(spl_buf, ref_buf, spl_hist, ref_hist, size, buf_pos, hist_pos) (
+    spl_hist[hist_pos] -= spl_buf[buf_pos];
+    spl_buf[buf_pos] = spl^2;
+    spl_hist[hist_pos] += spl_buf[buf_pos];
+    ref_hist[hist_pos] -= ref_buf[buf_pos];
+    ref_buf[buf_pos] = ref^2;
+    ref_hist[hist_pos] += ref_buf[buf_pos];
+
+    buf_pos = (buf_pos + 1) % size;
+
+    buf_pos === 0 ? (
+        hist_pos = (hist_pos + 1) % size;
+    );
+);
+
+function rms.get_spl_rms() instance(spl_hist, size) local (i, sum) (
+    i = sum = 0; loop(size,
+        sum += spl_hist[i];
+        i += 1;
+    );
+
+    sqrt(sum / size^2);
+);
+
+function rms.get_ref_rms() instance(ref_hist, size) local (i, sum) (
+    i = sum = 0; loop(size,
+        sum += ref_hist[i];
+        i += 1;
+    );
+
+    sqrt(sum / size^2);
+);
+
+
+/** FFT analyser **/
+
+function analyser.init(n) instance (spl_buf, ref_buf, spl_fft, ref_fft, fft_size, head) (
+    spl_buf = buffer.alloc(2 * n);
+    ref_buf = buffer.alloc(2 * n);
+    spl_fft = buffer.alloc(2 * n);
+    ref_fft = buffer.alloc(2 * n);
+    fft_size = n;
+    head = 0;
+
+    blackman_harris.init(n);
+);
+
+function analyser.get_fft_size() instance(fft_size) (
+    fft_size;
+);
+
+function analyser.freq_to_bin(freq) instance(fft_size) (
+    floor(freq * fft_size / srate);
+);
+
+function analyser.bin_to_freq(bin) instance(fft_size) (
+    bin * srate / fft_size;
+);
+
+function analyser.push(spl, ref) instance(spl_buf, ref_buf, fft_size, head) (
+    spl_buf[head] = spl * 0.5;
+    ref_buf[head] = ref * 0.5;
+    head = (head + 1) % (2 * fft_size);
+);
+
+function analyser.analyse() instance(spl_buf, ref_buf, spl_fft, ref_fft, fft_size, head) local(i, i0) (
+    i = 0; i0 = head + fft_size; loop(fft_size,
+        spl_fft[i] = spl_buf[(i0 + i) % (2 * fft_size)] * blackman_harris.get(i);
+        ref_fft[i] = ref_buf[(i0 + i) % (2 * fft_size)] * blackman_harris.get(i);
+        i += 1;
+    );
+
+    fft_real(spl_fft, fft_size);
+    fft_permute(spl_fft, fft_size / 2);
+    fft_real(ref_fft, fft_size);
+    fft_permute(ref_fft, fft_size / 2);
+    spl_fft[1] = ref_fft[1] = 0;
+);
+
+function analyser.get_spl_fft() instance(spl_fft) (
+    spl_fft;
+);
+
+function analyser.get_ref_fft() instance(ref_fft) (
+    ref_fft;
+);
+
+
+/** UI **/
+
+function ui.init() (
+    gfx_ext_retina == 0 ? gfx_ext_retina = 1;
+    gfx_clear = -1;
+    ext_noinit = 1;
+    ext_nodenorm = 1;
+);
+
+function ui._reset() (
+    gfx_ext_retina > 1 ? gfx_setfont(1, "Arial", 16 * gfx_ext_retina, 'b') : gfx_setfont(0);
+    gfx_set(0, 0, 0, 1);
+    gfx_rect(0, 0, gfx_w, gfx_h);
+);
+
+function ui._render_horizontal_grid() instance(ysc) local(gv, x, y, w, h, label) (
+  gfx_set(1, 1, 1, 1);
+  gfx_line(0, gfx_h / 2, gfx_w, gfx_h / 2);
+
+  gfx_set(.6, .6, .6, .5);
+  gv = -range; while (
+    y = gfx_h * 0.5 - gv * ysc;
+    gv != 0 ? (
+      x = range > 9 ? 60 : 45;
+      gfx_line(x, y, gfx_w, y);
+
+      range <= 9 || abs(gv) % 2 == 0 ? (
+        label = #;
+        sprintf(label, "%d", gv);
+        gfx_measurestr(label, w, h);
+        gfx_x = x - w - 5; gfx_y = y - h / 2; gfx_drawstr(label);
+      );
+    );
+    (gv += 1) <= range;
+  );
+);
+
+function ui._render_vertical_grid() instance(wsc) local(f, lx, tx, dotext) (
+  f = 20;
+  lx = gfx_x = 0;
+
+  while(
+    tx = log(1.0 + (f / srate * 2.0) * 400) * wsc;
+    dotext = tx > gfx_x && f != 40 && f != 4000 && f != 15000 &&
+       (f < 400 || f >= 1000 || f == 500) && (f < 6000 || f >= 10000);
+    tx > lx ? ( lx = tx + 4; gfx_line(tx, gfx_texth + 10, tx, gfx_h - (dotext ? 0 : gfx_texth + 10), 0); );
+    dotext ? (
+      gfx_x = tx + 3;
+      gfx_y = gfx_h - gfx_texth;
+      f >= 1000 ? gfx_printf("%dk", f * .001) : gfx_printf("%d", f);
+    );
+    f += (f < 100 ? 10 : f < 1000 ? 100 : f < 10000 ? 1000 : 5000);
+    f < srate * 0.5;
+  );
+);
+
+function ui._render_spectrum() instance(wsc, xscale, ysc) local(bin, s, r, t, x, y, x0, y0, xm, ym) (
+    ym = gfx_h / 2;
+
+    bin = 0; loop(analyser.get_fft_size() / 2,
+        s = smoothing.apply(analyser.get_spl_fft(), bin);
+        r = smoothing.apply(analyser.get_ref_fft(), bin);
+        t = integrator.apply(bin, s > 0 && r > 0 ? 10 * log10(s / r) : 0);
+
+        x = log(1 + bin * xscale) * wsc;
+        y = -ysc * t;
+
+        bin ? (
+            gfx_set(1, 0.8, 0, 0.15);
+            y !== 0 && y0 !== 0 && sign(y) !== sign(y0) ? (
+                xm = x0 + (x - x0) * abs(y0 / (y - y0));
+                gfx_triangle(x0, y0 + ym, xm, ym, x0, ym);
+                gfx_triangle(xm, ym, x - 1, ym, x - 1, y + ym);
+            ) : (
+                gfx_triangle(x0, y0 + ym, x - 1, y + ym, x - 1, ym, x0, ym);
+            );
+
+            gfx_set(1, 0.8, 0, 1);
+            gfx_line(x0, y0 + ym, x, y + ym, 1);
+        );
+
+        x0 = x;
+        y0 = y;
+        bin = smoothing.next(bin);
+    );
+);
+
+function ui.render(range) instance(wsc, xscale, ysc) (
+    ysc = (gfx_h - 2 * gfx_texth - 20) / (2 * range);
+    wsc = gfx_w / log(1 + 400);
+    xscale = 800 / (analyser.get_fft_size() - 4);
+
+    ui._reset();
+    ui._render_horizontal_grid(range);
+    ui._render_vertical_grid();
+    ui._render_spectrum();
+);
+
+function ui.handle_controls() instance(last_mouse_cap) local(i, ret, menu) (
+  mouse_cap == 2 && last_mouse_cap == 0 ? (
+    gfx_x = mouse_x;
+    gfx_y = mouse_y;
+
+    menu = #;
+    sprintf(menu, ">Range");
+    i = 6; loop(5, sprintf(menu, "%s|%s%d dB", menu, i == range ? "!" : "", i); i += 3);
+    sprintf(menu, "%s|<", menu);
+
+    ret = gfx_showmenu(menu);
+
+    ret > 0 ? (
+      range = 6 + 3 * (ret - 1);
+      slider_automate(range);
+    );
+  );
+
+  last_mouse_cap = mouse_cap;
+);
+

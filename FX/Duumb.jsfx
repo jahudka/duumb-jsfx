@@ -1,0 +1,40 @@
+desc: Duumb transfer function analyser
+version: 1.0.0
+author: jahudka
+license: MIT
+
+slider1:range=9<6,18,3>-range
+
+import Duumb.lib.jsfx-inc
+
+in_pin:measurement
+in_pin:reference
+options:no_meter gfx_hz=25
+
+
+@init
+
+ui.init();
+
+analyser.init(8192);
+
+integrator.init(analyser.get_fft_size());
+
+smoothing.init(analyser.get_fft_size());
+smoothing.add(analyser.freq_to_bin(150), 5, 3);
+smoothing.add(analyser.freq_to_bin(500), 13, 5);
+smoothing.add(analyser.freq_to_bin(2000), 29, 13);
+smoothing.add(analyser.freq_to_bin(5000), 61, 29);
+
+rms.init(1024);
+
+@sample
+analyser.push(spl0, spl1);
+
+
+@gfx 800 400
+
+integrator.update();
+analyser.analyse();
+ui.render(range);
+ui.handle_controls();
