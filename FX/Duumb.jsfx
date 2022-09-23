@@ -2,6 +2,8 @@ desc: Duumb transfer function analyser
 version: 1.0.0
 author: jahudka
 license: MIT
+provides:
+ **/*.jsfx-inc
 
 slider1:range=9<6,18,3>-range
 
