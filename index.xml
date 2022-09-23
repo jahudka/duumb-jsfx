@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<index version="1" name="Duumb" commit="78f3f00921b7b1cadb749ff38ecfe8c5af93d623">
+<index version="1" name="Duumb" commit="61b7d72b198840dc6cc5cebcfb7176bac2f4d247">
   <category name="FX">
     <reapack name="Duumb.jsfx" type="effect" desc="Duumb transfer function analyser">
       <version name="1.0.0" author="jahudka" time="2022-09-23T20:20:10Z">
-        <source>https://github.com/jahudka/duumb-jsfx/raw/78f3f00921b7b1cadb749ff38ecfe8c5af93d623/FX/Duumb.jsfx</source>
+        <source>https://github.com/jahudka/duumb-jsfx/raw/61b7d72b198840dc6cc5cebcfb7176bac2f4d247/FX/Duumb.jsfx</source>
+        <source file="Duumb.lib.jsfx-inc">https://github.com/jahudka/duumb-jsfx/raw/61b7d72b198840dc6cc5cebcfb7176bac2f4d247/FX/Duumb.lib.jsfx-inc</source>
       </version>
     </reapack>
   </category>
